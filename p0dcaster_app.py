@@ -121,6 +121,7 @@ def create_phone_effect(input_path, output_path):
     except:
         shutil.copy(input_path, output_path)
 
+
 def mix_final_audio(tmp_dir, script_dialogue, bg_source, selected_bg_url, uploaded_bg_file, music_ramp_up, uploaded_intro, uploaded_outro):
     tmp = Path(tmp_dir)
     inputs = []
@@ -186,6 +187,7 @@ def mix_final_audio(tmp_dir, script_dialogue, bg_source, selected_bg_url, upload
         ffmpeg.output(simple, str(out_path), acodec='mp3', audio_bitrate='192k').run(overwrite_output=True, quiet=True)
 
     return out_path
+
 # ================= FILE EXTRACTION (FIXED) =================
 def extract_text_from_files(files, audio_client=None):
     text = ""
@@ -544,6 +546,7 @@ with tab4:
             status.success("Complete!")
             st.audio(audio_bytes, format="audio/mp3")
             st.download_button("Download Podcast", audio_bytes, "podcast.mp3", "audio/mp3")
+
 
 
 
