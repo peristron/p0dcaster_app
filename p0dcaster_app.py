@@ -1,7 +1,5 @@
 # streamlit run p0dcaster_app.py
 #  directory setup: cd C:\users\oakhtar\documents\pyprojs_local
-
-
 import streamlit as st
 import os
 import tempfile
@@ -20,19 +18,14 @@ from pptx import Presentation
 from bs4 import BeautifulSoup
 import yt_dlp
 
-# --- AUDIO MIXING (Modern, Python 3.13-ready) ---
-import ffmpeg  # Replacement for pydub
+# --- AUDIO MIXING ---
+import ffmpeg
 
 # --- AI CLIENT ---
 from openai import OpenAI
 
 # ================= CONFIGURATION =================
-st.set_page_config(
-    page_title="PodcastLM Studio",
-    page_icon="🎧",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+st.set_page_config(page_title="PodcastLM Studio", page_icon="Headphones", layout="wide", initial_sidebar_state="expanded")
 
 # ================= SESSION STATE =================
 defaults = {
@@ -40,7 +33,7 @@ defaults = {
     "script_data": None,
     "source_text": "",
     "chat_history": [],
-    "notebook_content": f"# 📓 Research Notebook\n**Session Started:** {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n",
+    "notebook_content": f"# Research Notebook\n**Session Started:** {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n",
     "rehearsal_audio": None
 }
 for k, v in defaults.items():
@@ -55,7 +48,7 @@ def check_password():
         st.error("Incorrect Password")
 
 if not st.session_state.authenticated:
-    st.title("🔒 Studio Login")
+    st.title("Studio Login")
     st.text_input("Enter Password", type="password", key="password_input", on_change=check_password)
     st.stop()
 
@@ -104,7 +97,7 @@ def translate_prompt_if_needed(client, text, target_lang):
         try:
             res = client.chat.completions.create(
                 model="gpt-4o-mini",
-                messages=[{"role": "user", "content": f"Translate exactly to {target_lang}, preserve tone:\n\n{text}"}]
+                messages=[{"role": "user", "content": f"Translate exactly to {target_lang}:\n\n{text}"}]
             )
             return res.choices[0].message.content
         except:
@@ -117,10 +110,9 @@ def create_phone_effect(input_path, output_path):
         stream = ffmpeg.filter(stream, 'lowpass', f=3000)
         echo = ffmpeg.input(input_path).filter('adelay', delays='120|120').filter('volume', '0.7')
         stream = ffmpeg.filter([stream, echo], 'amix', inputs=2)
-        ffmpeg.output(stream, output_path, acodec='mp3', ab='192k').run(overwrite_output=True, quiet=True)
+        ffmpeg.output(stream, output_path, acodec='mp3', audio_bitrate='192k').run(overwrite_output=True, quiet=True)
     except:
         shutil.copy(input_path, output_path)
-
 
 def mix_final_audio(tmp_dir, script_dialogue, bg_source, selected_bg_url, uploaded_bg_file, music_ramp_up, uploaded_intro, uploaded_outro):
     tmp = Path(tmp_dir)
@@ -143,10 +135,10 @@ def mix_final_audio(tmp_dir, script_dialogue, bg_source, selected_bg_url, upload
     else:
         dialogue = inputs[0]
 
-    # 3. Loudness normalization
+    # 3. Normalize
     dialogue = dialogue.filter('loudnorm', I=-16, LRA=11, TP=-1.5, linear_norm=True)
 
-    # 4. Background music — FIXED LINE BELOW
+    # 4. Background music
     if bg_source != "None":
         bg_path = tmp / "bg.mp3"
         if bg_source == "Presets" and selected_bg_url:
@@ -158,8 +150,8 @@ def mix_final_audio(tmp_dir, script_dialogue, bg_source, selected_bg_url, upload
             bg = ffmpeg.input(str(bg_path))
             bg = bg.filter('aloop', loop=-1, size='2**31-1')
             bg = bg.filter('volume', 0.12)
-            # ← ONE LINE, NO BREAKS:
-            dialogue = ffmpeg.filter([bg, dialogue], 'amix', inputs=2, duration='longest').filter('aresample', async=1)
+            dialogue = ffmpeg.filter([bg, dialogue], 'amix', inputs=2, duration='longest')
+            dialogue = dialogue.filter('aresample', async=1)
 
     # 5. Cold open
     if music_ramp_up and bg_source != "None":
@@ -177,18 +169,17 @@ def mix_final_audio(tmp_dir, script_dialogue, bg_source, selected_bg_url, upload
     # 7. Fade out
     dialogue = dialogue.filter('afade', t='out', st='end-5', d=5)
 
-    # 8. Export with fallback
+    # 8. Export
     out_path = tmp / "podcast.mp3"
     try:
         ffmpeg.output(dialogue, str(out_path), acodec='mp3', audio_bitrate='192k', loglevel="error").run(overwrite_output=True, quiet=True)
-    except Exception as e:
+    except:
         st.warning("Advanced mixing failed — using simple concat")
         simple = ffmpeg.concat(*inputs, v=0, a=1, n=len(inputs))
         ffmpeg.output(simple, str(out_path), acodec='mp3', audio_bitrate='192k').run(overwrite_output=True, quiet=True)
 
     return out_path
 
-# ================= FILE EXTRACTION (FIXED) =================
 def extract_text_from_files(files, audio_client=None):
     text = ""
     for file in files:
@@ -213,15 +204,12 @@ def extract_text_from_files(files, audio_client=None):
             elif name.endswith((".mp3", ".wav", ".m4a", ".mp4", ".webm")):
                 if audio_client:
                     with st.spinner(f"Transcribing {file.name}..."):
-                        transcript = audio_client.audio.transcriptions.create(
-                            model="whisper-1",
-                            file=(file.name, file.getvalue())
-                        )
+                        transcript = audio_client.audio.transcriptions.create(model="whisper-1", file=(file.name, file.getvalue()))
                         text += transcript.text + "\n"
                 else:
-                    st.warning(f"OpenAI key required to transcribe {file.name}")
+                    st.warning(f"OpenAI key required for {file.name}")
             else:
-                st.warning(f"Unsupported format: {file.name}")
+                st.warning(f"Unsupported: {file.name}")
         except Exception as e:
             st.error(f"Error reading {file.name}: {e}")
     return text
@@ -286,9 +274,7 @@ with st.sidebar:
     model_choice = st.radio("Intelligence Engine", ["Model A (OpenAI)", "Model B (xAI Grok)"])
     xai_version = "Grok 4.1 Fast (Recommended)"
     if model_choice == "Model B (xAI Grok)":
-        xai_version = st.selectbox("Grok Model", [
-            "Grok 4.1 Fast (Recommended)", "Grok 4 Full", "Grok 4 Fast", "Grok Code Fast"
-        ])
+        xai_version = st.selectbox("Grok Model", ["Grok 4.1 Fast (Recommended)", "Grok 4 Full", "Grok 4 Fast", "Grok Code Fast"])
 
     budget_mode = st.checkbox("Budget Mode (GPT-4o-mini)", help="Saves 70–90% on LLM cost")
     privacy_mode = st.toggle("Privacy Mode", value=False)
@@ -335,7 +321,6 @@ with st.sidebar:
         uploaded_intro = st.file_uploader("Intro", type=["mp3", "wav"])
         uploaded_outro = st.file_uploader("Outro", type=["mp3", "wav"])
 
-    # Cost calculator
     st.divider()
     st.subheader("Live Cost Estimate")
     if st.session_state.script_data:
@@ -412,10 +397,8 @@ with tab2:
                         context = st.session_state.source_text[:75000]
                         stream = client.chat.completions.create(
                             model=model,
-                            messages=[
-                                {"role": "system", "content": "Answer using only the source."},
-                                {"role": "user", "content": f"Source: {context}\n\nQuestion: {prompt}"}
-                            ],
+                            messages=[{"role": "system", "content": "Answer using only the source."},
+                                     {"role": "user", "content": f"Source: {context}\n\nQuestion: {prompt}"}],
                             stream=True
                         )
                         response = st.write_stream(stream)
@@ -438,47 +421,40 @@ with tab3:
     with col_call:
         caller_prompt = st.text_area("Caller Question (optional)")
 
-if st.button("Generate Script", type="primary"):
-    if not st.session_state.source_text:
-        st.error("Load source first")
-    else:
-        client, model, err = get_llm_client(model_choice, xai_version, openai_key, xai_key, budget_mode)
-        if err:
-            st.error(err)
+    if st.button("Generate Script", type="primary"):
+        if not st.session_state.source_text:
+            st.error("Load source first")
         else:
-            with st.spinner("Writing script..."):
-                # ←←← FIXED BLOCK START ←←←
-                length_map = {
-                    "Short": "12 exchanges",
-                    "Medium": "30 exchanges", 
-                    "Long": "50 exchanges",
-                    "Extra Long": "80 exchanges"
-                }
-                duration_key = length_option.split()[0]  # "Short", "Medium", etc.
-                length_instr = length_map.get(duration_key, "30 exchanges")  # safe fallback
-                # ←←← FIXED BLOCK END ←←←
+            client, model, err = get_llm_client(model_choice, xai_version, openai_key, xai_key, budget_mode)
+            if err:
+                st.error(err)
+            else:
+                with st.spinner("Writing script..."):
+                    length_map = {"Short": "12 exchanges", "Medium": "30 exchanges", "Long": "50 exchanges", "Extra Long": "80 exchanges"}
+                    duration_key = length_option.split()[0]
+                    length_instr = length_map.get(duration_key, "30 exchanges")
 
-                call_in = f"Include a Caller asking: '{caller_prompt}' and hosts respond." if caller_prompt else ""
-                translated = translate_prompt_if_needed(client, user_instructions, language)
+                    call_in = f"Include a Caller asking: '{caller_prompt}' and hosts respond." if caller_prompt else ""
+                    translated = translate_prompt_if_needed(client, user_instructions, language)
 
-                prompt = f"""Create a podcast script in {language}.
-                Host 1: {host1_persona}
-                Host 2: {host2_persona}
-                Length: {length_instr}
-                Director notes: {translated}
-                {call_in}
-                Output strict JSON: {{"title": "...", "dialogue": [{{"speaker": "Host 1", "text": "..."}}, ...]}}
-                Source: {st.session_state.source_text[:40000]}"""
+                    prompt = f"""Create a podcast script in {language}.
+                    Host 1: {host1_persona}
+                    Host 2: {host2_persona}
+                    Length: {length_instr}
+                    Director notes: {translated}
+                    {call_in}
+                    Output strict JSON: {{"title": "...", "dialogue": [{{"speaker": "Host 1", "text": "..."}}, ...]}}
+                    Source: {st.session_state.source_text[:40000]}"""
 
-                res = client.chat.completions.create(
-                    model=model,
-                    messages=[{"role": "user", "content": prompt}],
-                    response_format={"type": "json_object"}
-                )
-                st.session_state.script_data = json.loads(res.choices[0].message.content)
-                st.success("Script ready!")
-                if privacy_mode:
-                    st.session_state.source_text = ""
+                    res = client.chat.completions.create(
+                        model=model,
+                        messages=[{"role": "user", "content": prompt}],
+                        response_format={"type": "json_object"}
+                    )
+                    st.session_state.script_data = json.loads(res.choices[0].message.content)
+                    st.success("Script ready!")
+                    if privacy_mode:
+                        st.session_state.source_text = ""
 
     if st.session_state.script_data:
         data = st.session_state.script_data
@@ -539,15 +515,10 @@ with tab4:
                 progress.progress((i + 1) / len(script))
 
             status.text("Mixing podcast...")
-            out_path = mix_final_audio(tmp_dir, script, voice_map, bg_source, selected_bg_url, uploaded_bg_file, music_ramp_up, uploaded_intro, uploaded_outro)
+            out_path = mix_final_audio(tmp_dir, script, bg_source, selected_bg_url, uploaded_bg_file, music_ramp_up, uploaded_intro, uploaded_outro)
             with open(out_path, "rb") as f:
                 audio_bytes = f.read()
 
             status.success("Complete!")
             st.audio(audio_bytes, format="audio/mp3")
             st.download_button("Download Podcast", audio_bytes, "podcast.mp3", "audio/mp3")
-
-
-
-
-
