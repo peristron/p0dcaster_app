@@ -1,6 +1,6 @@
 streamlit>=1.38.0
 openai>=1.40.0
-pydub==0.25.1
+ffmpeg-python==0.2.0
 yt-dlp>=2024.10.22
 PyPDF2>=3.0.1
 python-docx>=1.1.0
