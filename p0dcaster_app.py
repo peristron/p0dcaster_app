@@ -125,7 +125,7 @@ def mix_final_audio(tmp_dir, script_dialogue, bg_source, selected_bg_url, upload
     tmp = Path(tmp_dir)
     inputs = []
 
-    # 1. Collect all dialogue segments
+    # 1. Collect all segments
     for i, line in enumerate(script_dialogue):
         seg_path = tmp / f"{i}.mp3"
         if line['speaker'] == "Caller":
@@ -135,17 +135,17 @@ def mix_final_audio(tmp_dir, script_dialogue, bg_source, selected_bg_url, upload
         else:
             inputs.append(ffmpeg.input(str(seg_path)))
 
-    # 2. Concatenate with 400ms silence between lines
+    # 2. Concatenate with silence
     if len(inputs) > 1:
         dialogue = ffmpeg.concat(*inputs, v=0, a=1, n=len(inputs))
         dialogue = dialogue.filter('apad', pad_dur=0.4)
     else:
         dialogue = inputs[0]
 
-    # 3. Loudness normalization (safe version)
+    # 3. Loudness normalization
     dialogue = dialogue.filter('loudnorm', I=-16, LRA=11, TP=-1.5, linear_norm=True)
 
-    # 4. Background music
+    # 4. Background music — FIXED LINE BELOW
     if bg_source != "None":
         bg_path = tmp / "bg.mp3"
         if bg_source == "Presets" and selected_bg_url:
@@ -156,11 +156,11 @@ def mix_final_audio(tmp_dir, script_dialogue, bg_source, selected_bg_url, upload
         if bg_path.exists():
             bg = ffmpeg.input(str(bg_path))
             bg = bg.filter('aloop', loop=-1, size='2**31-1')
-            bg = bg.filter('volume', 0.12)  # -18 dB
-            # ← THIS LINE FIXES THE CRASH:
+            bg = bg.filter('volume', 0.12)
+            # ← ONE LINE, NO BREAKS:
             dialogue = ffmpeg.filter([bg, dialogue], 'amix', inputs=2, duration='longest').filter('aresample', async=1)
 
-    # 5. Cold open (music starts 5s early)
+    # 5. Cold open
     if music_ramp_up and bg_source != "None":
         silence = ffmpeg.input('anullsrc=channel_layout=stereo:sample_rate=44100', f='lavfi', t=5)
         dialogue = ffmpeg.concat(silence, dialogue, v=0, a=1)
@@ -173,21 +173,19 @@ def mix_final_audio(tmp_dir, script_dialogue, bg_source, selected_bg_url, upload
         outro = ffmpeg.input(io.BytesIO(uploaded_outro.getvalue()))
         dialogue = ffmpeg.concat(dialogue, outro, v=0, a=1)
 
-    # 7. Final fade-out
+    # 7. Fade out
     dialogue = dialogue.filter('afade', t='out', st='end-5', d=5)
 
-    # 8. Export — THIS IS THE CRITICAL LINE
+    # 8. Export with fallback
     out_path = tmp / "podcast.mp3"
     try:
-        ffmpeg.output(dialogue, str(out_path), acodec='mp3', audio_bitrate='192k', loglevel="error", y=None).run(overwrite_output=True)
-    except ffmpeg.Error as e:
-        st.error("Audio mixing failed. Falling back to simple concatenation.")
-        # Fallback: just concat raw files
-        fallback = ffmpeg.concat(*inputs, v=0, a=1, n=len(inputs))
-        ffmpeg.output(fallback, str(out_path), acodec='mp3', audio_bitrate='192k').run(overwrite_output=True, quiet=True)
+        ffmpeg.output(dialogue, str(out_path), acodec='mp3', audio_bitrate='192k', loglevel="error").run(overwrite_output=True, quiet=True)
+    except Exception as e:
+        st.warning("Advanced mixing failed — using simple concat")
+        simple = ffmpeg.concat(*inputs, v=0, a=1, n=len(inputs))
+        ffmpeg.output(simple, str(out_path), acodec='mp3', audio_bitrate='192k').run(overwrite_output=True, quiet=True)
 
     return out_path
-
 # ================= FILE EXTRACTION (FIXED) =================
 def extract_text_from_files(files, audio_client=None):
     text = ""
@@ -546,6 +544,7 @@ with tab4:
             status.success("Complete!")
             st.audio(audio_bytes, format="audio/mp3")
             st.download_button("Download Podcast", audio_bytes, "podcast.mp3", "audio/mp3")
+
 
 
 
