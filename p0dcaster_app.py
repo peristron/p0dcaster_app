@@ -20,7 +20,7 @@ import ffmpeg
 from openai import OpenAI
 
 st.set_page_config(
-    page_title="PodcastLM Studio",
+    page_title="PodcastLM Studio - OS Team Testing",
     page_icon="headphones",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -298,7 +298,7 @@ with st.sidebar:
         st.success(f"Total ≈ ${tts_cost + llm_cost:.2f}")
 
 # Main app
-st.title("PodcastLM Studio")
+st.title("PodcastLM Studio - OS Team Testing")
 tab1, tab2, tab3, tab4 = st.tabs(["1. Source", "2. Research Chat", "3. Script & Rehearsal", "4. Produce"])
 audio_client = OpenAI(api_key=openai_key) if openai_key else None
 
@@ -456,3 +456,4 @@ with tab4:
             status.success("Complete!")
             st.audio(audio_bytes, format="audio/mp3")
             st.download_button("Download Podcast", audio_bytes, "podcast.mp3", "audio/mp3")
+
