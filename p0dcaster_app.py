@@ -124,6 +124,8 @@ def create_phone_effect(input_path, output_path):
 def mix_final_audio(tmp_dir, script_dialogue, voice_map, bg_source, selected_bg_url, uploaded_bg_file, music_ramp_up, uploaded_intro, uploaded_outro):
     tmp = Path(tmp_dir)
     inputs = []
+
+    # 1. Collect all processed segments
     for i, line in enumerate(script_dialogue):
         seg_path = tmp / f"{i}.mp3"
         if line['speaker'] == "Caller":
@@ -133,38 +135,48 @@ def mix_final_audio(tmp_dir, script_dialogue, voice_map, bg_source, selected_bg_
         else:
             inputs.append(ffmpeg.input(str(seg_path)))
 
+    # 2. Concatenate with 400ms silence between lines
     if len(inputs) > 1:
-        dialogue = ffmpeg.concat(*inputs, v=0, a=1).node
+        dialogue = ffmpeg.concat(*inputs, v=0, a=1, n=len(inputs)).filter('apad', pad_dur=0.4)
     else:
-        dialogue = inputs[0].node
+        dialogue = inputs[0]
 
-    dialogue = ffmpeg.filter(dialogue, 'loudnorm', I=-16, TP=-1.5, LRA=11)
+    # 3. Normalize loudness (this is the safe way)
+    dialogue = ffmpeg.filter(dialogue, 'loudnorm', I=-16, TP=-1.5, LRA=11, measured_I=-16, measured_LRA=11, measured_TP=-1.5, linear_norm=True)
 
+    # 4. Background music
     if bg_source != "None":
         bg_path = tmp / "bg.mp3"
         if bg_source == "Presets" and selected_bg_url:
             download_file_with_headers(selected_bg_url, str(bg_path))
         elif uploaded_bg_file:
             bg_path.write_bytes(uploaded_bg_file.getvalue())
+
         if bg_path.exists():
-            bg = ffmpeg.input(str(bg_path)).filter('volume', '0.1')
-            bg = ffmpeg.filter(bg, 'aloop', loop=-1, size='2**31-1')
+            bg = ffmpeg.input(str(bg_path))
+            bg = bg.filter('aloop', loop=-1, size='2**31-1')
+            bg = bg.filter('volume', '0.1')  # -20 dB
             dialogue = ffmpeg.filter([bg, dialogue], 'amix', inputs=2, duration='longest')
 
-    if music_ramp_up:
-        silence = ffmpeg.input('anullsrc=channel_layout=stereo:sample_rate=44100', t=5, f='lavfi')
-        dialogue = ffmpeg.concat(silence, dialogue, v=0, a=1).node
+    # 5. Cold open (music starts 5s early)
+    if music_ramp_up and bg_source != "None":
+        silence = ffmpeg.input('anullsrc=channel_layout=stereo:sample_rate=44100', f='lavfi', t=5)
+        dialogue = ffmpeg.concat(silence, dialogue, v=0, a=1)
 
+    # 6. Intro / Outro
     if uploaded_intro:
         intro = ffmpeg.input(io.BytesIO(uploaded_intro.getvalue()))
-        dialogue = ffmpeg.concat(intro, dialogue, v=0, a=1).node
+        dialogue = ffmpeg.concat(intro, dialogue, v=0, a=1)
     if uploaded_outro:
         outro = ffmpeg.input(io.BytesIO(uploaded_outro.getvalue()))
-        dialogue = ffmpeg.concat(dialogue, outro, v=0, a=1).node
+        dialogue = ffmpeg.concat(dialogue, outro, v=0, a=1)
 
-    dialogue = ffmpeg.filter(dialogue, 'afade', t='out', st='end-4', d=4)
+    # 7. Final fade-out
+    dialogue = dialogue.filter('afade', t='out', st='end-5', d=5)
+
+    # 8. Export
     out_path = tmp / "podcast.mp3"
-    ffmpeg.output(dialogue, str(out_path), acodec='mp3', ab='192k').run(overwrite_output=True, quiet=True)
+    ffmpeg.output(dialogue, str(out_path), acodec='mp3', ab='192k', y=None).run(quiet=True, overwrite_output=True)
     return out_path
 
 # ================= FILE EXTRACTION (FIXED) =================
@@ -525,4 +537,5 @@ with tab4:
             status.success("Complete!")
             st.audio(audio_bytes, format="audio/mp3")
             st.download_button("Download Podcast", audio_bytes, "podcast.mp3", "audio/mp3")
+
 
