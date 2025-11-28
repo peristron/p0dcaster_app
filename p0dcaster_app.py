@@ -19,7 +19,12 @@ import yt_dlp
 import ffmpeg
 from openai import OpenAI
 
-st.set_page_config(page_title="PodcastLM Studio", page_icon="Headphones", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(
+    page_title="PodcastLM Studio",
+    page_icon="headphones",   # ← THIS LINE
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
 defaults = {
     "authenticated": False,
@@ -485,4 +490,5 @@ with tab4:
             status.success("Complete!")
             st.audio(audio_bytes, format="audio/mp3")
             st.download_button("Download Podcast", audio_bytes, "podcast.mp3", "audio/mp3")
+
 
