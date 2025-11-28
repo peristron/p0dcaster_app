@@ -288,7 +288,7 @@ with st.sidebar:
         uploaded_outro = st.file_uploader("Outro", type=["mp3", "wav"])
 
     st.divider()
-    st.subheader("Live Cost Estimate")
+    st.subheader("Live Cost Estimate, just FYI")
     if st.session_state.script_data:
         chars = sum(len(l["text"]) for l in st.session_state.script_data["dialogue"])
         tts_cost = (chars / 1_000_000) * 15
@@ -456,4 +456,5 @@ with tab4:
             status.success("Complete!")
             st.audio(audio_bytes, format="audio/mp3")
             st.download_button("Download Podcast", audio_bytes, "podcast.mp3", "audio/mp3")
+
 
