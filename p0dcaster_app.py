@@ -11,23 +11,16 @@ from pathlib import Path
 from datetime import datetime
 import asyncio
 
-# --- TEXT PROCESSING ---
 import PyPDF2
 import docx
 from pptx import Presentation
 from bs4 import BeautifulSoup
 import yt_dlp
-
-# --- AUDIO MIXING ---
 import ffmpeg
-
-# --- AI CLIENT ---
 from openai import OpenAI
 
-# ================= CONFIGURATION =================
 st.set_page_config(page_title="PodcastLM Studio", page_icon="Headphones", layout="wide", initial_sidebar_state="expanded")
 
-# ================= SESSION STATE =================
 defaults = {
     "authenticated": False,
     "script_data": None,
@@ -40,7 +33,6 @@ for k, v in defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
-# ================= AUTHENTICATION =================
 def check_password():
     if st.session_state.get("password_input", "") == st.secrets.get("APP_PASSWORD", ""):
         st.session_state.authenticated = True
@@ -52,7 +44,6 @@ if not st.session_state.authenticated:
     st.text_input("Enter Password", type="password", key="password_input", on_change=check_password)
     st.stop()
 
-# ================= UTILS =================
 def chunk_text(text, max_chars=25000):
     if len(text) <= max_chars:
         return [text]
@@ -77,7 +68,6 @@ def get_llm_client(model_selection, specific_model_name, openai_key, xai_key, bu
         if not openai_key:
             return None, None, "Missing OpenAI API Key"
         return OpenAI(api_key=openai_key), "gpt-4o-mini", None
-
     if model_selection == "Model B (xAI Grok)":
         if not xai_key:
             return None, None, "Missing xAI API Key"
@@ -95,10 +85,7 @@ def translate_prompt_if_needed(client, text, target_lang):
     non_english = ["Urdu", "Arabic", "Hebrew", "Hindi", "Chinese", "Japanese", "Korean", "Russian", "Turkish"]
     if any(lang in target_lang for lang in non_english):
         try:
-            res = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[{"role": "user", "content": f"Translate exactly to {target_lang}:\n\n{text}"}]
-            )
+            res = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": f"Translate exactly to {target_lang}:\n\n{text}"}])
             return res.choices[0].message.content
         except:
             return text
@@ -117,8 +104,6 @@ def create_phone_effect(input_path, output_path):
 def mix_final_audio(tmp_dir, script_dialogue, bg_source, selected_bg_url, uploaded_bg_file, music_ramp_up, uploaded_intro, uploaded_outro):
     tmp = Path(tmp_dir)
     inputs = []
-
-    # 1. Collect all segments
     for i, line in enumerate(script_dialogue):
         seg_path = tmp / f"{i}.mp3"
         if line['speaker'] == "Caller":
@@ -128,24 +113,20 @@ def mix_final_audio(tmp_dir, script_dialogue, bg_source, selected_bg_url, upload
         else:
             inputs.append(ffmpeg.input(str(seg_path)))
 
-    # 2. Concatenate with silence
     if len(inputs) > 1:
         dialogue = ffmpeg.concat(*inputs, v=0, a=1, n=len(inputs))
         dialogue = dialogue.filter('apad', pad_dur=0.4)
     else:
         dialogue = inputs[0]
 
-    # 3. Normalize
     dialogue = dialogue.filter('loudnorm', I=-16, LRA=11, TP=-1.5, linear_norm=True)
 
-    # 4. Background music
     if bg_source != "None":
         bg_path = tmp / "bg.mp3"
         if bg_source == "Presets" and selected_bg_url:
             download_file_with_headers(selected_bg_url, str(bg_path))
         elif uploaded_bg_file:
             bg_path.write_bytes(uploaded_bg_file.getvalue())
-
         if bg_path.exists():
             bg = ffmpeg.input(str(bg_path))
             bg = bg.filter('aloop', loop=-1, size='2**31-1')
@@ -153,12 +134,10 @@ def mix_final_audio(tmp_dir, script_dialogue, bg_source, selected_bg_url, upload
             dialogue = ffmpeg.filter([bg, dialogue], 'amix', inputs=2, duration='longest')
             dialogue = dialogue.filter('aresample', async=1)
 
-    # 5. Cold open
     if music_ramp_up and bg_source != "None":
         silence = ffmpeg.input('anullsrc=channel_layout=stereo:sample_rate=44100', f='lavfi', t=5)
         dialogue = ffmpeg.concat(silence, dialogue, v=0, a=1)
 
-    # 6. Intro / Outro
     if uploaded_intro:
         intro = ffmpeg.input(io.BytesIO(uploaded_intro.getvalue()))
         dialogue = ffmpeg.concat(intro, dialogue, v=0, a=1)
@@ -166,18 +145,15 @@ def mix_final_audio(tmp_dir, script_dialogue, bg_source, selected_bg_url, upload
         outro = ffmpeg.input(io.BytesIO(uploaded_outro.getvalue()))
         dialogue = ffmpeg.concat(dialogue, outro, v=0, a=1)
 
-    # 7. Fade out
     dialogue = dialogue.filter('afade', t='out', st='end-5', d=5)
 
-    # 8. Export
     out_path = tmp / "podcast.mp3"
     try:
-        ffmpeg.output(dialogue, str(out_path), acodec='mp3', audio_bitrate='192k', loglevel="error").run(overwrite_output=True, quiet=True)
+        ffmpeg.output(dialogue, str(out_path), acodec='mp3', audio_bitrate='192k').run(overwrite_output=True, quiet=True)
     except:
         st.warning("Advanced mixing failed — using simple concat")
         simple = ffmpeg.concat(*inputs, v=0, a=1, n=len(inputs))
         ffmpeg.output(simple, str(out_path), acodec='mp3', audio_bitrate='192k').run(overwrite_output=True, quiet=True)
-
     return out_path
 
 def extract_text_from_files(files, audio_client=None):
@@ -265,7 +241,6 @@ def generate_audio_openai(client, text, voice, filename, speed=1.0):
     except:
         return False
 
-# ================= SIDEBAR =================
 with st.sidebar:
     st.title("Studio Settings")
     openai_key = st.secrets.get("OPENAI_API_KEY") or st.text_input("OpenAI API Key", type="password")
@@ -331,13 +306,11 @@ with st.sidebar:
         st.metric("LLM Cost", f"${llm_cost:.2f}")
         st.success(f"Total ≈ ${tts_cost + llm_cost:.2f}")
 
-# ================= MAIN APP =================
 st.title("PodcastLM Studio")
 tab1, tab2, tab3, tab4 = st.tabs(["1. Source", "2. Research Chat", "3. Script & Rehearsal", "4. Produce"])
 
 audio_client = OpenAI(api_key=openai_key) if openai_key else None
 
-# --- TAB 1 ---
 with tab1:
     st.info("Upload content — drives both chat and podcast")
     input_type = st.radio("Input Type", ["Files", "Web URL", "Video URL", "Text"], horizontal=True)
@@ -375,7 +348,6 @@ with tab1:
         st.session_state.notebook_content += f"\n---\n### New Source ({datetime.now().strftime('%H:%M')})\n\n"
         st.success("Source loaded!")
 
-# --- TAB 2 ---
 with tab2:
     col1, col2 = st.columns([1, 1])
     with col1:
@@ -395,12 +367,10 @@ with tab2:
                     with st.chat_message("user"): st.markdown(prompt)
                     with st.chat_message("assistant"):
                         context = st.session_state.source_text[:75000]
-                        stream = client.chat.completions.create(
-                            model=model,
-                            messages=[{"role": "system", "content": "Answer using only the source."},
-                                     {"role": "user", "content": f"Source: {context}\n\nQuestion: {prompt}"}],
-                            stream=True
-                        )
+                        stream = client.chat.completions.create(model=model, messages=[
+                            {"role": "system", "content": "Answer using only the source."},
+                            {"role": "user", "content": f"Source: {context}\n\nQuestion: {prompt}"}
+                        ], stream=True)
                         response = st.write_stream(stream)
                     st.session_state.chat_history.append({"role": "assistant", "content": response})
                     st.session_state.notebook_content += f"**Q:** {prompt}\n**A:** {response}\n\n"
@@ -413,7 +383,6 @@ with tab2:
             st.session_state.notebook_content = nb
         st.download_button("Save .md", st.session_state.notebook_content, "notebook.md")
 
-# --- TAB 3 ---
 with tab3:
     col_dir, col_call = st.columns([1, 1])
     with col_dir:
@@ -446,11 +415,7 @@ with tab3:
                     Output strict JSON: {{"title": "...", "dialogue": [{{"speaker": "Host 1", "text": "..."}}, ...]}}
                     Source: {st.session_state.source_text[:40000]}"""
 
-                    res = client.chat.completions.create(
-                        model=model,
-                        messages=[{"role": "user", "content": prompt}],
-                        response_format={"type": "json_object"}
-                    )
+                    res = client.chat.completions.create(model=model, messages=[{"role": "user", "content": prompt}], response_format={"type": "json_object"})
                     st.session_state.script_data = json.loads(res.choices[0].message.content)
                     st.success("Script ready!")
                     if privacy_mode:
@@ -475,8 +440,7 @@ with tab3:
 
         st.subheader("Live Rehearsal")
         if st.session_state.script_data:
-            idx = st.selectbox("Preview line", range(len(data["dialogue"])),
-                               format_func=lambda i: f"{data['dialogue'][i]['speaker']}: {data['dialogue'][i]['text'][:60]}...")
+            idx = st.selectbox("Preview line", range(len(data["dialogue"])), format_func=lambda i: f"{data['dialogue'][i]['speaker']}: {data['dialogue'][i]['text'][:60]}...")
             if st.button("Play Line"):
                 if openai_key:
                     line = data["dialogue"][idx]
@@ -489,7 +453,6 @@ with tab3:
                 else:
                     st.error("OpenAI key needed")
 
-# --- TAB 4 ---
 with tab4:
     if st.session_state.script_data and st.button("Produce Final Podcast", type="primary"):
         if not openai_key:
