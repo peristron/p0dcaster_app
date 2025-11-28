@@ -404,9 +404,16 @@ with tab3:
                 st.error(err)
             else:
                 with st.spinner("Writing script..."):
-                    length_map = {"Short": "12 exchanges", "Medium": "30 exchanges", "Long": "50 exchanges", "Extra Long": "80 exchanges"}
-                    duration_key = length_option.split()[0]
-                    length_instr = length_map.get(duration_key, "30 exchanges")
+                    
+length_targets = {
+    "Short (2 min)": 800,     # ~2–3 min
+    "Medium (5 min)": 2200,   # ~5–7 min
+    "Long (15 min)": 6000,    # ~12–18 min
+    "Extra Long (30 min)": 12000  # ~25–35 min real
+}
+
+target_words = length_targets[length_option]
+length_instr = f"Write a very detailed, conversational script with approximately {target_words} total words (roughly {length_option.split('(')[0]}of speaking). Use natural back-and-forth dialogue, include tangents, jokes, and explanations. NEVER truncate lines."
 
                     call_in = f"Include a Caller asking: '{caller_prompt}' and hosts respond." if caller_prompt else ""
                     translated = translate_prompt_if_needed(client, user_instructions, language)
@@ -490,5 +497,6 @@ with tab4:
             status.success("Complete!")
             st.audio(audio_bytes, format="audio/mp3")
             st.download_button("Download Podcast", audio_bytes, "podcast.mp3", "audio/mp3")
+
 
 
