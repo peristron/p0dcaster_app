@@ -417,38 +417,47 @@ with tab3:
     with col_call:
         caller_prompt = st.text_area("Caller Question (optional)")
 
-    if st.button("Generate Script", type="primary"):
-        if not st.session_state.source_text:
-            st.error("Load source first")
+if st.button("Generate Script", type="primary"):
+    if not st.session_state.source_text:
+        st.error("Load source first")
+    else:
+        client, model, err = get_llm_client(model_choice, xai_version, openai_key, xai_key, budget_mode)
+        if err:
+            st.error(err)
         else:
-            client, model, err = get_llm_client(model_choice, xai_version, openai_key, xai_key, budget_mode)
-            if err:
-                st.error(err)
-            else:
-                with st.spinner("Writing script..."):
-                    length_map = {"Short": "12 exchanges", "Medium": "30 exchanges", "Long": "50 exchanges", "Extra Long": "80 exchanges"}
-                    length_instr = length_map[length_option.split()[0]]
-                    call_in = f"Include a Caller asking: '{caller_prompt}' and hosts respond." if caller_prompt else ""
-                    translated = translate_prompt_if_needed(client, user_instructions, language)
+            with st.spinner("Writing script..."):
+                # ←←← FIXED BLOCK START ←←←
+                length_map = {
+                    "Short": "12 exchanges",
+                    "Medium": "30 exchanges", 
+                    "Long": "50 exchanges",
+                    "Extra Long": "80 exchanges"
+                }
+                duration_key = length_option.split()[0]  # "Short", "Medium", etc.
+                length_instr = length_map.get(duration_key, "30 exchanges")  # safe fallback
+                # ←←← FIXED BLOCK END ←←←
 
-                    prompt = f"""Create a podcast script in {language}.
-                    Host 1: {host1_persona}
-                    Host 2: {host2_persona}
-                    Length: {length_instr}
-                    Director notes: {translated}
-                    {call_in}
-                    Output strict JSON: {{"title": "...", "dialogue": [{{"speaker": "Host 1", "text": "..."}}, ...]}}
-                    Source: {st.session_state.source_text[:40000]}"""
+                call_in = f"Include a Caller asking: '{caller_prompt}' and hosts respond." if caller_prompt else ""
+                translated = translate_prompt_if_needed(client, user_instructions, language)
 
-                    res = client.chat.completions.create(
-                        model=model,
-                        messages=[{"role": "user", "content": prompt}],
-                        response_format={"type": "json_object"}
-                    )
-                    st.session_state.script_data = json.loads(res.choices[0].message.content)
-                    st.success("Script ready!")
-                    if privacy_mode:
-                        st.session_state.source_text = ""
+                prompt = f"""Create a podcast script in {language}.
+                Host 1: {host1_persona}
+                Host 2: {host2_persona}
+                Length: {length_instr}
+                Director notes: {translated}
+                {call_in}
+                Output strict JSON: {{"title": "...", "dialogue": [{{"speaker": "Host 1", "text": "..."}}, ...]}}
+                Source: {st.session_state.source_text[:40000]}"""
+
+                res = client.chat.completions.create(
+                    model=model,
+                    messages=[{"role": "user", "content": prompt}],
+                    response_format={"type": "json_object"}
+                )
+                st.session_state.script_data = json.loads(res.choices[0].message.content)
+                st.success("Script ready!")
+                if privacy_mode:
+                    st.session_state.source_text = ""
 
     if st.session_state.script_data:
         data = st.session_state.script_data
@@ -516,3 +525,4 @@ with tab4:
             status.success("Complete!")
             st.audio(audio_bytes, format="audio/mp3")
             st.download_button("Download Podcast", audio_bytes, "podcast.mp3", "audio/mp3")
+
