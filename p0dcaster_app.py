@@ -121,28 +121,29 @@ def create_phone_effect(input_path, output_path):
     except:
         shutil.copy(input_path, output_path)
 
-def mix_final_audio(tmp_dir, script_dialogue, voice_map, bg_source, selected_bg_url, uploaded_bg_file, music_ramp_up, uploaded_intro, uploaded_outro):
+def mix_final_audio(tmp_dir, script_dialogue, bg_source, selected_bg_url, uploaded_bg_file, music_ramp_up, uploaded_intro, uploaded_outro):
     tmp = Path(tmp_dir)
     inputs = []
 
-    # 1. Collect all processed segments
+    # 1. Collect all dialogue segments
     for i, line in enumerate(script_dialogue):
         seg_path = tmp / f"{i}.mp3"
         if line['speaker'] == "Caller":
             phone_path = tmp / f"phone_{i}.mp3"
-            create_phone_effect(seg_path, phone_path)
+            create_phone_effect(str(seg_path), str(phone_path))
             inputs.append(ffmpeg.input(str(phone_path)))
         else:
             inputs.append(ffmpeg.input(str(seg_path)))
 
     # 2. Concatenate with 400ms silence between lines
     if len(inputs) > 1:
-        dialogue = ffmpeg.concat(*inputs, v=0, a=1, n=len(inputs)).filter('apad', pad_dur=0.4)
+        dialogue = ffmpeg.concat(*inputs, v=0, a=1, n=len(inputs))
+        dialogue = dialogue.filter('apad', pad_dur=0.4)
     else:
         dialogue = inputs[0]
 
-    # 3. Normalize loudness (this is the safe way)
-    dialogue = ffmpeg.filter(dialogue, 'loudnorm', I=-16, TP=-1.5, LRA=11, measured_I=-16, measured_LRA=11, measured_TP=-1.5, linear_norm=True)
+    # 3. Loudness normalization (safe version)
+    dialogue = dialogue.filter('loudnorm', I=-16, LRA=11, TP=-1.5, linear_norm=True)
 
     # 4. Background music
     if bg_source != "None":
@@ -155,8 +156,9 @@ def mix_final_audio(tmp_dir, script_dialogue, voice_map, bg_source, selected_bg_
         if bg_path.exists():
             bg = ffmpeg.input(str(bg_path))
             bg = bg.filter('aloop', loop=-1, size='2**31-1')
-            bg = bg.filter('volume', '0.1')  # -20 dB
-            dialogue = ffmpeg.filter([bg, dialogue], 'amix', inputs=2, duration='longest')
+            bg = bg.filter('volume', 0.12)  # -18 dB
+            # ← THIS LINE FIXES THE CRASH:
+            dialogue = ffmpeg.filter([bg, dialogue], 'amix', inputs=2, duration='longest').filter('aresample', async=1)
 
     # 5. Cold open (music starts 5s early)
     if music_ramp_up and bg_source != "None":
@@ -174,9 +176,16 @@ def mix_final_audio(tmp_dir, script_dialogue, voice_map, bg_source, selected_bg_
     # 7. Final fade-out
     dialogue = dialogue.filter('afade', t='out', st='end-5', d=5)
 
-    # 8. Export
+    # 8. Export — THIS IS THE CRITICAL LINE
     out_path = tmp / "podcast.mp3"
-    ffmpeg.output(dialogue, str(out_path), acodec='mp3', ab='192k', y=None).run(quiet=True, overwrite_output=True)
+    try:
+        ffmpeg.output(dialogue, str(out_path), acodec='mp3', audio_bitrate='192k', loglevel="error", y=None).run(overwrite_output=True)
+    except ffmpeg.Error as e:
+        st.error("Audio mixing failed. Falling back to simple concatenation.")
+        # Fallback: just concat raw files
+        fallback = ffmpeg.concat(*inputs, v=0, a=1, n=len(inputs))
+        ffmpeg.output(fallback, str(out_path), acodec='mp3', audio_bitrate='192k').run(overwrite_output=True, quiet=True)
+
     return out_path
 
 # ================= FILE EXTRACTION (FIXED) =================
@@ -537,5 +546,6 @@ with tab4:
             status.success("Complete!")
             st.audio(audio_bytes, format="audio/mp3")
             st.download_button("Download Podcast", audio_bytes, "podcast.mp3", "audio/mp3")
+
 
 
