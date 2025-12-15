@@ -138,7 +138,7 @@ def mix_final_audio(tmp_dir, script_dialogue, bg_source, selected_bg_url, upload
             bg = bg.filter('aloop', loop=-1, size='2147483647')
             bg = bg.filter('volume', 0.12)
             dialogue = ffmpeg.filter([bg, dialogue], 'amix', inputs=2, duration='longest')
-            dialogue = dialogue.filter('aresample', async_='1')
+            dialogue = dialogue.filter('aresample', **{'async': '1'})  # ✅ corrected
     if music_ramp_up and bg_source != "None":
         silence = ffmpeg.input('anullsrc=channel_layout=stereo:sample_rate=44100', f='lavfi', t=5)
         dialogue = ffmpeg.concat(silence, dialogue, v=0, a=1)
@@ -513,6 +513,7 @@ with tab4:
                 st.download_button("Download Podcast", audio_bytes, "podcast.mp3", "audio/mp3")
             else:
                 st.error("Podcast production failed. See errors above for details.")
+
 
 
 
