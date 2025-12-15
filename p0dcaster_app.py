@@ -135,7 +135,7 @@ def mix_final_audio(tmp_dir, script_dialogue, bg_source, selected_bg_url, upload
             bg_path.write_bytes(uploaded_bg_file.getvalue())
         if bg_path.exists():
             bg = ffmpeg.input(str(bg_path))
-            bg = bg.filter('aloop', loop=-1, size='2**31-1')
+            bg = bg.filter('aloop', loop=-1, size='2147483647')
             bg = bg.filter('volume', 0.12)
             dialogue = ffmpeg.filter([bg, dialogue], 'amix', inputs=2, duration='longest')
             dialogue = dialogue.filter('aresample', async_='1')
@@ -513,4 +513,5 @@ with tab4:
                 st.download_button("Download Podcast", audio_bytes, "podcast.mp3", "audio/mp3")
             else:
                 st.error("Podcast production failed. See errors above for details.")
+
 
