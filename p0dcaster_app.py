@@ -1,5 +1,5 @@
-# streamlit run p0dcaster_app.py  - CURRENT LKG CODE as of 12.14.25
-#  directory setup: cd C:\users\oakhtar\documents\pyprojs_local
+# p0dcaster_app_v4.py - Improved Version
+
 import streamlit as st
 import os
 import tempfile
@@ -10,7 +10,6 @@ import shutil
 from pathlib import Path
 from datetime import datetime
 import asyncio
-
 import PyPDF2
 import docx
 from pptx import Presentation
@@ -19,14 +18,15 @@ import yt_dlp
 import ffmpeg
 from openai import OpenAI
 
+# --- Streamlit Page Config ---
 st.set_page_config(
     page_title="PodcastLM Studio - OS Team Testing",
-    page_icon="headphones",
+    page_icon="🎧",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Session state
+# --- Session State Defaults ---
 defaults = {
     "authenticated": False,
     "script_data": None,
@@ -39,7 +39,7 @@ for k, v in defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
-# Authentication
+# --- Authentication ---
 def check_password():
     if st.session_state.get("password_input", "") == st.secrets.get("APP_PASSWORD", ""):
         st.session_state.authenticated = True
@@ -51,7 +51,7 @@ if not st.session_state.authenticated:
     st.text_input("Enter Password", type="password", key="password_input", on_change=check_password)
     st.stop()
 
-# LLM client
+# --- LLM Client Factory ---
 def get_llm_client(model_selection, specific_model_name, openai_key, xai_key, budget_mode):
     if budget_mode or model_selection == "Model A (OpenAI)":
         if not openai_key: return None, None, "Missing OpenAI API Key"
@@ -68,18 +68,22 @@ def get_llm_client(model_selection, specific_model_name, openai_key, xai_key, bu
         return OpenAI(api_key=xai_key, base_url="https://api.x.ai/v1"), actual, None
     return None, None, "Invalid Selection"
 
-# Translation helper
+# --- Translation Helper ---
 def translate_prompt_if_needed(client, text, target_lang):
     non_english = ["Urdu", "Arabic", "Hebrew", "Hindi", "Chinese", "Japanese", "Korean", "Russian", "Turkish"]
     if any(lang in target_lang for lang in non_english):
         try:
-            res = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": f"Translate exactly to {target_lang}:\n\n{text}"}])
+            res = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": f"Translate exactly to {target_lang}:\n\n{text}"}]
+            )
             return res.choices[0].message.content
-        except:
+        except Exception as e:
+            st.warning(f"Translation failed: {e}")
             return text
     return text
 
-# Audio effects
+# --- Audio Effects ---
 def create_phone_effect(input_path, output_path):
     try:
         stream = ffmpeg.input(input_path)
@@ -87,10 +91,11 @@ def create_phone_effect(input_path, output_path):
         echo = ffmpeg.input(input_path).filter('adelay', delays='120|120').filter('volume', '0.7')
         stream = ffmpeg.filter([stream, echo], 'amix', inputs=2)
         ffmpeg.output(stream, output_path, acodec='mp3', audio_bitrate='192k').run(overwrite_output=True, quiet=True)
-    except:
+    except Exception as e:
+        st.warning(f"Phone effect failed: {e}")
         shutil.copy(input_path, output_path)
 
-# Final mixing — bulletproof
+# --- Final Mixing ---
 def mix_final_audio(tmp_dir, script_dialogue, bg_source, selected_bg_url, uploaded_bg_file, music_ramp_up, uploaded_intro, uploaded_outro):
     tmp = Path(tmp_dir)
     inputs = []
@@ -102,15 +107,13 @@ def mix_final_audio(tmp_dir, script_dialogue, bg_source, selected_bg_url, upload
             inputs.append(ffmpeg.input(str(phone_path)))
         else:
             inputs.append(ffmpeg.input(str(seg_path)))
-
     if len(inputs) > 1:
         dialogue = ffmpeg.concat(*inputs, v=0, a=1, n=len(inputs))
         dialogue = dialogue.filter('apad', pad_dur=0.4)
     else:
         dialogue = inputs[0]
-
     dialogue = dialogue.filter('loudnorm', I=-16, LRA=11, TP=-1.5, linear_norm=True)
-
+    # Background music
     if bg_source != "None":
         bg_path = tmp / "bg.mp3"
         if bg_source == "Presets" and selected_bg_url:
@@ -123,30 +126,26 @@ def mix_final_audio(tmp_dir, script_dialogue, bg_source, selected_bg_url, upload
             bg = bg.filter('volume', 0.12)
             dialogue = ffmpeg.filter([bg, dialogue], 'amix', inputs=2, duration='longest')
             dialogue = dialogue.filter('aresample', async_='1')
-
     if music_ramp_up and bg_source != "None":
         silence = ffmpeg.input('anullsrc=channel_layout=stereo:sample_rate=44100', f='lavfi', t=5)
         dialogue = ffmpeg.concat(silence, dialogue, v=0, a=1)
-
     if uploaded_intro:
         intro = ffmpeg.input(io.BytesIO(uploaded_intro.getvalue()))
         dialogue = ffmpeg.concat(intro, dialogue, v=0, a=1)
     if uploaded_outro:
         outro = ffmpeg.input(io.BytesIO(uploaded_outro.getvalue()))
         dialogue = ffmpeg.concat(dialogue, outro, v=0, a=1)
-
     dialogue = dialogue.filter('afade', t='out', st='end-5', d=5)
-
     out_path = tmp / "podcast.mp3"
     try:
         ffmpeg.output(dialogue, str(out_path), acodec='mp3', audio_bitrate='192k').run(overwrite_output=True, quiet=True)
-    except:
-        st.warning("Advanced mixing failed — using simple concat")
+    except Exception as e:
+        st.warning(f"Advanced mixing failed ({e}) — using simple concat")
         simple = ffmpeg.concat(*inputs, v=0, a=1, n=len(inputs))
         ffmpeg.output(simple, str(out_path), acodec='mp3', audio_bitrate='192k').run(overwrite_output=True, quiet=True)
     return out_path
 
-# File extraction
+# --- File Extraction ---
 def extract_text_from_files(files, audio_client=None):
     text = ""
     for file in files:
@@ -190,8 +189,9 @@ def download_file_with_headers(url, save_path):
                 for chunk in r.iter_content(8192):
                     f.write(chunk)
             return True
-    except:
-        return False
+    except Exception as e:
+        st.warning(f"Download failed: {e}")
+    return False
 
 def scrape_website(url):
     try:
@@ -201,7 +201,8 @@ def scrape_website(url):
         for tag in soup(["script", "style", "header", "footer", "nav"]):
             tag.decompose()
         return soup.get_text()
-    except:
+    except Exception as e:
+        st.warning(f"Scraping failed: {e}")
         return None
 
 async def download_and_transcribe_video(url, audio_client):
@@ -228,28 +229,25 @@ def generate_audio_openai(client, text, voice, filename, speed=1.0):
         response = client.audio.speech.create(model="tts-1", voice=voice, input=text, speed=speed)
         response.stream_to_file(filename)
         return True
-    except:
+    except Exception as e:
+        st.warning(f"TTS failed: {e}")
         return False
 
-# Sidebar
+# --- Sidebar ---
 with st.sidebar:
     st.title("Studio Settings")
     openai_key = st.secrets.get("OPENAI_API_KEY") or st.text_input("OpenAI API Key", type="password")
     xai_key = st.secrets.get("XAI_API_KEY") or st.text_input("xAI API Key (Optional)", type="password")
-
     model_choice = st.radio("Intelligence Engine", ["Model A (OpenAI)", "Model B (xAI Grok)"])
     xai_version = "Grok 4.1 Fast (Recommended)"
     if model_choice == "Model B (xAI Grok)":
         xai_version = st.selectbox("Grok Model", ["Grok 4.1 Fast (Recommended)", "Grok 4 Full", "Grok 4 Fast", "Grok Code Fast"])
-
     budget_mode = st.checkbox("Budget Mode (GPT-4o-mini)", help="Saves 70–90% on LLM cost")
     privacy_mode = st.toggle("Privacy Mode", value=False)
-
     if st.button("New Session"):
         for key in defaults:
             st.session_state[key] = defaults[key]
         st.rerun()
-
     st.divider()
     st.subheader("Language & Length")
     language = st.selectbox("Output Language", [
@@ -257,14 +255,11 @@ with st.sidebar:
         "Hindi", "Urdu", "Arabic", "Hebrew", "Russian", "Turkish", "Japanese", "Korean", "Chinese (Mandarin)"
     ])
     length_option = st.select_slider("Duration", ["Short (2 min)", "Medium (5 min)", "Long (15 min)", "Extra Long (30 min)"])
-
     st.subheader("Hosts")
     host1_persona = st.text_input("Host 1 Persona", "Male, curious, slightly skeptical")
     host2_persona = st.text_input("Host 2 Persona", "Female, enthusiastic expert")
-
     voice_style = st.selectbox("Voice Pair", ["Dynamic (Alloy & Nova)", "Calm (Onyx & Shimmer)", "Formal (Echo & Fable)"])
     voice_map = {"Dynamic (Alloy & Nova)": ("alloy", "nova"), "Calm (Onyx & Shimmer)": ("onyx", "shimmer"), "Formal (Echo & Fable)": ("echo", "fable")}
-
     st.divider()
     st.subheader("Music")
     bg_source = st.radio("Background Music", ["Presets", "Upload Custom", "None"], horizontal=True)
@@ -282,11 +277,9 @@ with st.sidebar:
         selected_bg_url = music_urls[music_choice]
     elif bg_source == "Upload Custom":
         uploaded_bg_file = st.file_uploader("Upload Loop", type=["mp3", "wav"])
-
     with st.expander("Intro/Outro"):
         uploaded_intro = st.file_uploader("Intro", type=["mp3", "wav"])
         uploaded_outro = st.file_uploader("Outro", type=["mp3", "wav"])
-
     st.divider()
     st.subheader("Live Cost Estimate, just FYI (populates AFTER script generation step)")
     if st.session_state.script_data:
@@ -297,7 +290,7 @@ with st.sidebar:
         st.metric("LLM Cost", f"${llm_cost:.2f}")
         st.success(f"Total ≈ ${tts_cost + llm_cost:.2f}")
 
-# Main app
+# --- Main App ---
 st.title("PodcastLM Studio - OS Team Testing")
 tab1, tab2, tab3, tab4 = st.tabs(["1. Source", "2. Research Chat", "3. Script & Rehearsal", "4. Produce"])
 audio_client = OpenAI(api_key=openai_key) if openai_key else None
@@ -307,19 +300,16 @@ with tab1:
     st.info("Upload content — drives both chat and podcast")
     input_type = st.radio("Input Type", ["Files", "Web URL", "Video URL", "Text"], horizontal=True)
     new_text = ""
-
     if input_type == "Files":
         files = st.file_uploader("Upload", accept_multiple_files=True)
         if files and st.button("Process"):
             with st.spinner("Extracting text..."):
                 new_text = extract_text_from_files(files, audio_client)
-
     elif input_type == "Web URL":
         url = st.text_input("Article URL")
         if url and st.button("Scrape"):
             with st.spinner("Scraping..."):
                 new_text = scrape_website(url) or ""
-
     elif input_type == "Video URL":
         vid_url = st.text_input("YouTube / Video URL")
         if vid_url and st.button("Transcribe"):
@@ -330,24 +320,21 @@ with tab1:
                     new_text = text or ""
             else:
                 st.error("OpenAI key required")
-
     elif input_type == "Text":
         new_text = st.text_area("Paste text", height=300)
-
     if new_text and new_text != st.session_state.source_text:
         st.session_state.source_text = new_text
         st.session_state.chat_history = []
         st.session_state.notebook_content += f"\n---\n### New Source ({datetime.now().strftime('%H:%M')})\n\n"
         st.success("Source loaded!")
 
-# === TAB 3: SCRIPT GENERATION (FIXED WORD-COUNT TARGETS) ===
+# === TAB 3: SCRIPT GENERATION ===
 with tab3:
     col_dir, col_call = st.columns([1, 1])
     with col_dir:
         user_instructions = st.text_area("Director Notes", placeholder="e.g., Make it funny")
     with col_call:
         caller_prompt = st.text_area("Caller Question (optional)")
-
     if st.button("Generate Script", type="primary"):
         if not st.session_state.source_text:
             st.error("Load source first")
@@ -357,7 +344,6 @@ with tab3:
                 st.error(err)
             else:
                 with st.spinner("Writing script..."):
-                    # ←←← WORD-COUNT TARGETS (THIS IS THE KEY FIX) ←←←
                     word_targets = {
                         "Short (2 min)": 800,
                         "Medium (5 min)": 2200,
@@ -366,20 +352,16 @@ with tab3:
                     }
                     target_words = word_targets[length_option]
                     length_instr = f"Write a very detailed, natural, conversational podcast script with approximately {target_words} total words ({length_option}). Use long explanations, tangents, humor, and back-and-forth dialogue. NEVER truncate lines."
-                    # ←←← END FIX ←←←
-
                     call_in = f"Include a Caller asking: '{caller_prompt}' and hosts respond." if caller_prompt else ""
                     translated = translate_prompt_if_needed(client, user_instructions, language)
-
                     prompt = f"""Create a podcast script in {language}.
-                    Host 1: {host1_persona}
-                    Host 2: {host2_persona}
-                    {length_instr}
-                    Director notes: {translated}
-                    {call_in}
-                    Output strict JSON: {{"title": "...", "dialogue": [{{"speaker": "Host 1", "text": "..."}}, ...]}}
-                    Source: {st.session_state.source_text[:40000]}"""
-
+Host 1: {host1_persona}
+Host 2: {host2_persona}
+{length_instr}
+Director notes: {translated}
+{call_in}
+Output strict JSON: {{"title": "...", "dialogue": [{{"speaker": "Host 1", "text": "..."}}, ...]}}
+Source: {st.session_state.source_text[:40000]}"""
                     res = client.chat.completions.create(
                         model=model,
                         messages=[{"role": "user", "content": prompt}],
@@ -389,12 +371,10 @@ with tab3:
                     st.success("Script ready!")
                     if privacy_mode:
                         st.session_state.source_text = ""
-
-    # Rest of Tab 3 (editing, rehearsal) unchanged
+    # Script editing and rehearsal
     if st.session_state.script_data:
         data = st.session_state.script_data
         st.subheader(data.get("title", "Untitled Podcast"))
-
         with st.expander("Edit Script"):
             with st.form("edit_form"):
                 new_d = []
@@ -407,38 +387,33 @@ with tab3:
                 if st.form_submit_button("Save"):
                     st.session_state.script_data["dialogue"] = new_d
                     st.success("Saved")
-
         st.subheader("Live Rehearsal")
-        if st.session_state.script_data:
-            idx = st.selectbox("Preview line", range(len(data["dialogue"])), format_func=lambda i: f"{data['dialogue'][i]['speaker']}: {data['dialogue'][i]['text'][:60]}...")
-            if st.button("Play Line"):
-                if openai_key:
-                    line = data["dialogue"][idx]
-                    voice = voice_map[voice_style][0 if line["speaker"] == "Host 1" else 1]
-                    if line["speaker"] == "Caller":
-                        voice = "fable"
-                    with tempfile.NamedTemporaryFile(suffix=".mp3") as tmp:
-                        generate_audio_openai(audio_client, line["text"], voice, tmp.name)
-                        st.audio(tmp.name)
-                else:
-                    st.error("OpenAI key needed")
+        idx = st.selectbox("Preview line", range(len(data["dialogue"])), format_func=lambda i: f"{data['dialogue'][i]['speaker']}: {data['dialogue'][i]['text'][:60]}...")
+        if st.button("Play Line"):
+            if openai_key:
+                line = data["dialogue"][idx]
+                voice = voice_map[voice_style][0 if line["speaker"] == "Host 1" else 1]
+                if line["speaker"] == "Caller":
+                    voice = "fable"
+                with tempfile.NamedTemporaryFile(suffix=".mp3") as tmp:
+                    generate_audio_openai(audio_client, line["text"], voice, tmp.name)
+                    st.audio(tmp.name)
+            else:
+                st.error("OpenAI key needed")
 
-# === TAB 4: PRODUCTION (unchanged) ===
+# === TAB 4: PRODUCTION ===
 with tab4:
     if st.session_state.script_data and st.button("Produce Final Podcast", type="primary"):
         if not openai_key:
             st.error("OpenAI key required")
             st.stop()
-
         progress = st.progress(0)
         status = st.empty()
         audio_client = OpenAI(api_key=openai_key)
         m_voice, f_voice = voice_map[voice_style]
-
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp = Path(tmp_dir)
             script = st.session_state.script_data["dialogue"]
-
             for i, line in enumerate(script):
                 status.text(f"Voicing line {i+1}/{len(script)}")
                 voice = m_voice if line["speaker"] == "Host 1" else f_voice
@@ -447,12 +422,10 @@ with tab4:
                 f_path = tmp / f"{i}.mp3"
                 generate_audio_openai(audio_client, line["text"], voice, str(f_path))
                 progress.progress((i + 1) / len(script))
-
             status.text("Mixing podcast...")
             out_path = mix_final_audio(tmp_dir, script, bg_source, selected_bg_url, uploaded_bg_file, music_ramp_up, uploaded_intro, uploaded_outro)
             with open(out_path, "rb") as f:
                 audio_bytes = f.read()
-
             status.success("Complete!")
             st.audio(audio_bytes, format="audio/mp3")
             st.download_button("Download Podcast", audio_bytes, "podcast.mp3", "audio/mp3")
