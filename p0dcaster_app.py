@@ -1,5 +1,4 @@
-# p0dcaster_app_v4.py - Improved Version
-
+# p0dcaster_app_v5.py - improved version
 import streamlit as st
 import os
 import tempfile
@@ -17,15 +16,7 @@ from bs4 import BeautifulSoup
 import yt_dlp
 import ffmpeg
 from openai import OpenAI
-
 import subprocess
-import streamlit as st
-
-try:
-    version = subprocess.check_output(["ffmpeg", "-version"]).decode()
-    st.sidebar.info(f"ffmpeg found:\n{version.splitlines()[0]}")
-except Exception as e:
-    st.sidebar.error(f"ffmpeg not found: {e}")
 
 # --- Streamlit Page Config ---
 st.set_page_config(
@@ -34,6 +25,13 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# --- ffmpeg Version Check (Debug) ---
+try:
+    version = subprocess.check_output(["ffmpeg", "-version"]).decode()
+    st.sidebar.info(f"ffmpeg found:\n{version.splitlines()[0]}")
+except Exception as e:
+    st.sidebar.error(f"ffmpeg not found: {e}")
 
 # --- Session State Defaults ---
 defaults = {
@@ -104,18 +102,24 @@ def create_phone_effect(input_path, output_path):
         st.warning(f"Phone effect failed: {e}")
         shutil.copy(input_path, output_path)
 
-# --- Final Mixing ---
+# --- Final Mixing (with ffmpeg error output) ---
 def mix_final_audio(tmp_dir, script_dialogue, bg_source, selected_bg_url, uploaded_bg_file, music_ramp_up, uploaded_intro, uploaded_outro):
     tmp = Path(tmp_dir)
     inputs = []
     for i, line in enumerate(script_dialogue):
         seg_path = tmp / f"{i}.mp3"
+        if not seg_path.exists() or seg_path.stat().st_size == 0:
+            st.error(f"Missing or empty audio segment: {seg_path}")
+            continue
         if line['speaker'] == "Caller":
             phone_path = tmp / f"phone_{i}.mp3"
             create_phone_effect(str(seg_path), str(phone_path))
             inputs.append(ffmpeg.input(str(phone_path)))
         else:
             inputs.append(ffmpeg.input(str(seg_path)))
+    if not inputs:
+        st.error("No valid audio segments to mix.")
+        return None
     if len(inputs) > 1:
         dialogue = ffmpeg.concat(*inputs, v=0, a=1, n=len(inputs))
         dialogue = dialogue.filter('apad', pad_dur=0.4)
@@ -148,10 +152,15 @@ def mix_final_audio(tmp_dir, script_dialogue, bg_source, selected_bg_url, upload
     out_path = tmp / "podcast.mp3"
     try:
         ffmpeg.output(dialogue, str(out_path), acodec='mp3', audio_bitrate='192k').run(overwrite_output=True, quiet=True)
-    except Exception as e:
-        st.warning(f"Advanced mixing failed ({e}) — using simple concat")
-        simple = ffmpeg.concat(*inputs, v=0, a=1, n=len(inputs))
-        ffmpeg.output(simple, str(out_path), acodec='mp3', audio_bitrate='192k').run(overwrite_output=True, quiet=True)
+    except ffmpeg.Error as e:
+        st.warning(f"Advanced mixing failed: {e.stderr.decode(errors='ignore')}")
+        # fallback...
+        try:
+            simple = ffmpeg.concat(*inputs, v=0, a=1, n=len(inputs))
+            ffmpeg.output(simple, str(out_path), acodec='mp3', audio_bitrate='192k').run(overwrite_output=True, quiet=True)
+        except Exception as e2:
+            st.error(f"Simple concat also failed: {e2}")
+            return None
     return out_path
 
 # --- File Extraction ---
@@ -233,13 +242,14 @@ async def download_and_transcribe_video(url, audio_client):
     except Exception as e:
         return None, str(e)
 
+# --- Audio Generation Helper (with debug) ---
 def generate_audio_openai(client, text, voice, filename, speed=1.0):
     try:
         response = client.audio.speech.create(model="tts-1", voice=voice, input=text, speed=speed)
         response.stream_to_file(filename)
         return True
     except Exception as e:
-        st.warning(f"TTS failed: {e}")
+        st.warning(f"TTS failed for voice '{voice}': {e}")
         return False
 
 # --- Sidebar ---
@@ -410,7 +420,7 @@ Source: {st.session_state.source_text[:40000]}"""
             else:
                 st.error("OpenAI key needed")
 
-# === TAB 4: PRODUCTION ===
+# === TAB 4: PRODUCTION (with debug) ===
 with tab4:
     if st.session_state.script_data and st.button("Produce Final Podcast", type="primary"):
         if not openai_key:
@@ -423,19 +433,30 @@ with tab4:
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp = Path(tmp_dir)
             script = st.session_state.script_data["dialogue"]
+
+            # --- DEBUG: Show script data ---
+            st.write("Script data for debugging:", st.session_state.script_data)
+
+            # --- Generate audio segments with debug checks ---
             for i, line in enumerate(script):
                 status.text(f"Voicing line {i+1}/{len(script)}")
                 voice = m_voice if line["speaker"] == "Host 1" else f_voice
                 if line["speaker"] == "Caller":
                     voice = "fable"
                 f_path = tmp / f"{i}.mp3"
-                generate_audio_openai(audio_client, line["text"], voice, str(f_path))
+                success = generate_audio_openai(audio_client, line["text"], voice, str(f_path))
+                # --- DEBUG: Check audio file existence and size ---
+                if not success or not f_path.exists() or f_path.stat().st_size == 0:
+                    st.error(f"Audio generation failed for line {i}: {line['text'][:60]}")
                 progress.progress((i + 1) / len(script))
+
             status.text("Mixing podcast...")
             out_path = mix_final_audio(tmp_dir, script, bg_source, selected_bg_url, uploaded_bg_file, music_ramp_up, uploaded_intro, uploaded_outro)
-            with open(out_path, "rb") as f:
-                audio_bytes = f.read()
-            status.success("Complete!")
-            st.audio(audio_bytes, format="audio/mp3")
-            st.download_button("Download Podcast", audio_bytes, "podcast.mp3", "audio/mp3")
-
+            if out_path and out_path.exists():
+                with open(out_path, "rb") as f:
+                    audio_bytes = f.read()
+                status.success("Complete!")
+                st.audio(audio_bytes, format="audio/mp3")
+                st.download_button("Download Podcast", audio_bytes, "podcast.mp3", "audio/mp3")
+            else:
+                st.error("Podcast production failed. See errors above for details.")
