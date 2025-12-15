@@ -125,7 +125,7 @@ def mix_final_audio(tmp_dir, script_dialogue, bg_source, selected_bg_url, upload
         dialogue = dialogue.filter('apad', pad_dur=0.4)
     else:
         dialogue = inputs[0]
-    dialogue = dialogue.filter('loudnorm', I=-16, LRA=11, TP=-1.5, linear_norm=True)
+    dialogue = dialogue.filter('loudnorm', I=-16, LRA=11, TP=-1.5)
     # Background music
     if bg_source != "None":
         bg_path = tmp / "bg.mp3"
@@ -513,5 +513,6 @@ with tab4:
                 st.download_button("Download Podcast", audio_bytes, "podcast.mp3", "audio/mp3")
             else:
                 st.error("Podcast production failed. See errors above for details.")
+
 
 
