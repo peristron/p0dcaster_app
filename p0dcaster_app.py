@@ -347,6 +347,59 @@ with tab1:
         st.session_state.notebook_content += f"\n---\n### New Source ({datetime.now().strftime('%H:%M')})\n\n"
         st.success("Source loaded!")
 
+# === TAB 2: RESEARCH CHAT ===
+with tab2:
+    st.header("Research Chat")
+    if not st.session_state.source_text:
+        st.info("Please upload or enter source content in Tab 1 first.")
+    else:
+        # Display chat history
+        for entry in st.session_state.chat_history:
+            if entry["role"] == "user":
+                st.markdown(f"**You:** {entry['content']}")
+            else:
+                st.markdown(f"**AI:** {entry['content']}")
+
+        # Chat input
+        user_question = st.text_input("Ask a question about the source:", key="research_chat_input")
+        if st.button("Send", key="research_chat_send") and user_question.strip():
+            # Add user question to chat history
+            st.session_state.chat_history.append({"role": "user", "content": user_question})
+
+            # Prepare LLM client
+            client, model, err = get_llm_client(
+                model_choice, xai_version, openai_key, xai_key, budget_mode
+            )
+            if err:
+                st.error(err)
+            else:
+                # Compose prompt with source and chat history
+                chat_prompt = [
+                    {"role": "system", "content": "You are a helpful research assistant. Use the provided source to answer questions."},
+                    {"role": "system", "content": f"Source:\n{st.session_state.source_text[:40000]}"}
+                ]
+                # Add previous exchanges (optional, for context)
+                for entry in st.session_state.chat_history:
+                    chat_prompt.append({"role": entry["role"], "content": entry["content"]})
+
+                # Query LLM
+                with st.spinner("Thinking..."):
+                    try:
+                        response = client.chat.completions.create(
+                            model=model,
+                            messages=chat_prompt,
+                            max_tokens=512
+                        )
+                        ai_reply = response.choices[0].message.content
+                        st.session_state.chat_history.append({"role": "assistant", "content": ai_reply})
+                        st.markdown(f"**AI:** {ai_reply}")
+                    except Exception as e:
+                        st.error(f"LLM error: {e}")
+
+        # Option to clear chat
+        if st.button("Clear Chat", key="research_chat_clear"):
+            st.session_state.chat_history = []
+
 # === TAB 3: SCRIPT GENERATION ===
 with tab3:
     col_dir, col_call = st.columns([1, 1])
@@ -460,3 +513,4 @@ with tab4:
                 st.download_button("Download Podcast", audio_bytes, "podcast.mp3", "audio/mp3")
             else:
                 st.error("Podcast production failed. See errors above for details.")
+
