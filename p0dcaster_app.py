@@ -18,6 +18,15 @@ import yt_dlp
 import ffmpeg
 from openai import OpenAI
 
+import subprocess
+import streamlit as st
+
+try:
+    version = subprocess.check_output(["ffmpeg", "-version"]).decode()
+    st.sidebar.info(f"ffmpeg found:\n{version.splitlines()[0]}")
+except Exception as e:
+    st.sidebar.error(f"ffmpeg not found: {e}")
+
 # --- Streamlit Page Config ---
 st.set_page_config(
     page_title="PodcastLM Studio - OS Team Testing",
@@ -429,3 +438,4 @@ with tab4:
             status.success("Complete!")
             st.audio(audio_bytes, format="audio/mp3")
             st.download_button("Download Podcast", audio_bytes, "podcast.mp3", "audio/mp3")
+
