@@ -148,7 +148,6 @@ def mix_final_audio(tmp_dir, script_dialogue, bg_source, selected_bg_url, upload
     if uploaded_outro:
         outro = ffmpeg.input(io.BytesIO(uploaded_outro.getvalue()))
         dialogue = ffmpeg.concat(dialogue, outro, v=0, a=1)
-    dialogue = dialogue.filter('afade', t='out', st='end-5', d=5)
     out_path = tmp / "podcast.mp3"
     try:
         ffmpeg.output(dialogue, str(out_path), acodec='mp3', audio_bitrate='192k').run(overwrite_output=True, quiet=True)
@@ -513,6 +512,7 @@ with tab4:
                 st.download_button("Download Podcast", audio_bytes, "podcast.mp3", "audio/mp3")
             else:
                 st.error("Podcast production failed. See errors above for details.")
+
 
 
 
